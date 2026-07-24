@@ -1,0 +1,17 @@
+{
+  "schema": "nightshift.pressure-state.v1",
+  "device_id": "pressure-01",
+  "boot_id": "7f92ab31",
+  "seq": 123,
+  "sampled_at_ms": 178123,
+  "time_base": "monotonic_boot_ms",
+  "gpio": {
+    "4": true,
+    "5": false,
+    "6": true,
+    "7": true
+  },
+  "cushion": true,
+  "footrest": true,
+  "presence": true
+}

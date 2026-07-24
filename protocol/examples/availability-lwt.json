@@ -1,0 +1,5 @@
+{
+  "schema": "nightshift.sensor-availability.v1",
+  "device_id": "pressure-01",
+  "online": false
+}

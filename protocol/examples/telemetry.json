@@ -1,0 +1,11 @@
+{
+  "schema": "nightshift.pressure-telemetry.v1",
+  "device_id": "pressure-01",
+  "boot_id": "7f92ab31",
+  "uptime_ms": 90000,
+  "wifi_rssi_dbm": -51,
+  "mqtt_reconnect_count": 1,
+  "publish_count": 35,
+  "reported_at_ms": 90000,
+  "time_base": "monotonic_boot_ms"
+}

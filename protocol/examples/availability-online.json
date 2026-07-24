@@ -1,0 +1,9 @@
+{
+  "schema": "nightshift.sensor-availability.v1",
+  "device_id": "pressure-01",
+  "online": true,
+  "boot_id": "7f92ab31",
+  "version": "0.1.0",
+  "started_at_ms": 0,
+  "time_base": "monotonic_boot_ms"
+}

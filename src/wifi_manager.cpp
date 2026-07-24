@@ -1,83 +1,92 @@
-// wifi_manager.cpp - Wi-Fi lifecycle implementation
 #include "wifi_manager.h"
+
 #include "config.h"
 #include "secrets.h"
-#include <WiFi.h>
-#include <Arduino.h>
 
-static char _ipBuf[16] = "0.0.0.0";
+#include <algorithm>
+#include <Arduino.h>
+#include <WiFi.h>
+#include <esp_system.h>
 
 void WiFiManager::begin() {
     WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(false);  // We handle reconnect ourselves
-    WiFi.disconnect(true);
-    delay(100);
-
-    Serial.printf("[WiFi] Connecting to SSID: %s\n", WIFI_SSID);
-    startConnection();
+    WiFi.setAutoReconnect(false);
+    WiFi.persistent(false);
+    WiFi.disconnect(false, false);
+    startConnection(millis());
 }
 
-bool WiFiManager::update(uint32_t now_ms) {
-    bool stateChanged = false;
+bool WiFiManager::reached(uint32_t nowMs, uint32_t dueAtMs) {
+    return static_cast<int32_t>(nowMs - dueAtMs) >= 0;
+}
 
-    if (WiFi.status() == WL_CONNECTED) {
-        if (_status != WiFiStatus::CONNECTED) {
-            _status = WiFiStatus::CONNECTED;
-            resetBackoff();
+bool WiFiManager::update(uint32_t nowMs) {
+    const wl_status_t link = WiFi.status();
 
-            // Cache IP string
-            IPAddress ip = WiFi.localIP();
-            snprintf(_ipBuf, sizeof(_ipBuf), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-
-            Serial.printf("[WiFi] Connected! IP: %s  RSSI: %d dBm\n", _ipBuf, WiFi.RSSI());
-            stateChanged = true;
-            _wasConnected = true;
+    if (link == WL_CONNECTED) {
+        if (status_ != WiFiStatus::CONNECTED) {
+            status_ = WiFiStatus::CONNECTED;
+            backoffMs_ = nightshift::WIFI_RECONNECT_MIN_MS;
+            const IPAddress ip = WiFi.localIP();
+            snprintf(ip_, sizeof(ip_), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+            Serial.printf("[WiFi] connected ip=%s rssi=%d dBm\n", ip_, WiFi.RSSI());
+            return true;
         }
-    } else {
-        if (_status == WiFiStatus::CONNECTED) {
-            // Lost connection
-            _status = WiFiStatus::DISCONNECTED;
-            Serial.println("[WiFi] Connection lost");
-            stateChanged = true;
-        }
-
-        if (_status == WiFiStatus::DISCONNECTED) {
-            // Attempt reconnect with backoff
-            if (now_ms - _lastAttempt_ms >= jitteredBackoff()) {
-                Serial.printf("[WiFi] Reconnecting (backoff: %lu ms)...\n", _backoff_ms);
-                startConnection();
-                increaseBackoff();
-            }
-        }
+        return false;
     }
 
-    return stateChanged;
+    if (status_ == WiFiStatus::CONNECTED) {
+        status_ = WiFiStatus::DISCONNECTED;
+        Serial.printf("[WiFi] disconnected status=%d\n", static_cast<int>(link));
+        scheduleRetry(nowMs);
+        return true;
+    }
+
+    if (status_ == WiFiStatus::CONNECTING) {
+        const bool terminalFailure =
+            link == WL_CONNECT_FAILED || link == WL_NO_SSID_AVAIL;
+        const bool timedOut =
+            nowMs - attemptStartedAtMs_ >= nightshift::WIFI_CONNECT_TIMEOUT_MS;
+        if (terminalFailure || timedOut) {
+            WiFi.disconnect(false, false);
+            status_ = WiFiStatus::DISCONNECTED;
+            Serial.printf("[WiFi] attempt failed status=%d\n", static_cast<int>(link));
+            scheduleRetry(nowMs);
+        }
+        return false;
+    }
+
+    if (reached(nowMs, nextAttemptAtMs_)) {
+        startConnection(nowMs);
+    }
+
+    return false;
 }
 
 int WiFiManager::getRSSI() const {
-    return WiFi.RSSI();
+    return isConnected() ? WiFi.RSSI() : 0;
 }
 
 const char* WiFiManager::getIP() const {
-    return _ipBuf;
+    return ip_;
 }
 
-void WiFiManager::startConnection() {
+void WiFiManager::startConnection(uint32_t nowMs) {
+    Serial.printf("[WiFi] connecting ssid=%s\n", WIFI_SSID);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    _status = WiFiStatus::CONNECTING;
-    _lastAttempt_ms = millis();
+    status_ = WiFiStatus::CONNECTING;
+    attemptStartedAtMs_ = nowMs;
 }
 
-void WiFiManager::resetBackoff() {
-    _backoff_ms = WIFI_RECONNECT_MIN_MS;
-}
-
-void WiFiManager::increaseBackoff() {
-    _backoff_ms = min(_backoff_ms * 2, WIFI_RECONNECT_MAX_MS);
-}
-
-uint32_t WiFiManager::jitteredBackoff() const {
-    // Add up to 25% jitter
-    uint32_t jitter = random(0, _backoff_ms / 4);
-    return _backoff_ms + jitter;
+void WiFiManager::scheduleRetry(uint32_t nowMs) {
+    const uint32_t jitterWindow = backoffMs_ / 4U;
+    const uint32_t jitter = jitterWindow == 0
+        ? 0
+        : esp_random() % (jitterWindow + 1U);
+    nextAttemptAtMs_ = nowMs + backoffMs_ + jitter;
+    Serial.printf("[WiFi] retry in %lu ms\n",
+        static_cast<unsigned long>(backoffMs_ + jitter));
+    backoffMs_ = std::min(
+        backoffMs_ * 2U, nightshift::WIFI_RECONNECT_MAX_MS
+    );
 }
