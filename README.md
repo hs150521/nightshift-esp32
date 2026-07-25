@@ -7,12 +7,12 @@ Reliable four-input digital pressure node for the Nightshift system.
 
 ## Hardware Mapping
 
-| ESP32-S3 GPIO | Meaning | Active Level |
+| ESP32-S3 GPIO | Meaning | Electrical Trigger Level |
 |---|---|---|
-| GPIO4 | Cushion left | High = triggered |
-| GPIO5 | Cushion right | High = triggered |
-| GPIO6 | Footrest left | High = triggered |
-| GPIO7 | Footrest right | High = triggered |
+| GPIO4 | Cushion left | Low = triggered |
+| GPIO5 | Cushion right | Low = triggered |
+| GPIO6 | Footrest left | Low = triggered |
+| GPIO7 | Footrest right | Low = triggered |
 
 **Logical groups:**
 
@@ -21,8 +21,10 @@ Reliable four-input digital pressure node for the Nightshift system.
 - `presence = cushion OR footrest`
 
 All four pins are sampled from one GPIO input register approximately every
-10 ms and use internal pull-downs. Stable high/low states are valid; firmware
-does not perform wiring or sensor-fault diagnosis.
+10 ms and use internal pull-ups. The hardware inputs are active-low, and the
+sampling layer normalizes them before debounce and publication. All serial and
+MQTT logical values therefore retain the contract `1`/`true` = triggered and
+`0`/`false` = not triggered.
 
 ## Wi-Fi Configuration
 
@@ -190,7 +192,7 @@ test/test_core/       production-linked Unity tests (host or ESP32 target)
 | Flash fails | Close COM9 users and retry automatic reset first; use BOOT only if esptool logs cannot enter download mode |
 | Wi-Fi won't connect | Verify SSID/password in secrets.h; check AP is on 2.4GHz ch6 |
 | MQTT connect fails | Verify broker on 192.168.51.1:1884; check username/password |
-| All GPIOs read low | Check wiring; sensors should pull GPIO high when triggered |
+| All logical GPIOs read high | Check wiring; sensors should pull GPIO low when triggered |
 | Reconnect loop | Read bounded retry lines in serial; the device should not reboot |
 
 More detail is in [docs/troubleshooting.md](docs/troubleshooting.md).

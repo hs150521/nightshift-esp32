@@ -29,7 +29,7 @@ uint32_t lastSampleAtMs = 0;
 
 void logState(const PressureState& state) {
     Serial.printf(
-        "[GPIO] stable g4=%d g5=%d g6=%d g7=%d cushion=%d footrest=%d presence=%d\n",
+        "[GPIO] logical stable g4=%d g5=%d g6=%d g7=%d cushion=%d footrest=%d presence=%d\n",
         state.gpio4,
         state.gpio5,
         state.gpio6,
@@ -116,7 +116,10 @@ void setup() {
 
     gpioSampler.begin();
     debouncer.reset(gpioSampler.sample(), millis());
-    Serial.println("[GPIO] initialized pins=4,5,6,7 mode=input-pulldown active=high");
+    Serial.println(
+        "[GPIO] initialized pins=4,5,6,7 mode=input-pullup "
+        "electrical-active-low logical-1=triggered"
+    );
 
     if (!mqttManager.begin(clientId, lwtPayload)) {
         Serial.println("[Boot] MQTT initialization failed; sampling remains active");

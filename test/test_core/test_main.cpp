@@ -37,6 +37,11 @@ void assertGroups(
     TEST_ASSERT_EQUAL(presence, state.presence);
 }
 
+void test_active_low_electrical_level_is_normalized_to_logical_trigger() {
+    TEST_ASSERT_TRUE(nightshift::sensorTriggeredFromElectricalLevel(false));
+    TEST_ASSERT_FALSE(nightshift::sensorTriggeredFromElectricalLevel(true));
+}
+
 void test_all_four_low() {
     const PressureState state = settle({false, false, false, false});
     TEST_ASSERT_FALSE(state.gpio4);
@@ -522,6 +527,7 @@ void setUp() {}
 void tearDown() {}
 
 void runAllTests() {
+    RUN_TEST(test_active_low_electrical_level_is_normalized_to_logical_trigger);
     RUN_TEST(test_all_four_low);
     RUN_TEST(test_gpio4_only_activates_cushion);
     RUN_TEST(test_gpio5_only_activates_cushion);

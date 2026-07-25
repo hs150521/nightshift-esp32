@@ -59,9 +59,11 @@ that it is necessary.
 
 ## State does not change
 
-GPIO4–GPIO7 are active-high inputs with internal pull-downs. A press must remain
-high for 30 ms; a release must remain low for 100 ms. No 3-second release dwell
-exists in this firmware. Never connect a GPIO directly to a voltage above
+GPIO4–GPIO7 are electrically active-low inputs with internal pull-ups. A press
+must hold the electrical level low for 30 ms; a release must hold it high for
+100 ms. Firmware normalizes these levels so serial and MQTT still report
+`1`/`true` for triggered and `0`/`false` for not triggered. No 3-second release
+dwell exists in this firmware. Never connect a GPIO directly to a voltage above
 3.3 V.
 
 ## Retained state appears stale

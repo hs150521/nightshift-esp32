@@ -18,6 +18,11 @@ constexpr std::array<int, 4> SENSOR_PINS = {
     PIN_CUSHION_LEFT, PIN_CUSHION_RIGHT, PIN_FOOTREST_LEFT, PIN_FOOTREST_RIGHT
 };
 constexpr size_t SENSOR_COUNT = SENSOR_PINS.size();
+constexpr bool SENSOR_ELECTRICAL_ACTIVE_LOW = true;
+
+constexpr bool sensorTriggeredFromElectricalLevel(bool electricalHigh) {
+    return SENSOR_ELECTRICAL_ACTIVE_LOW ? !electricalHigh : electricalHigh;
+}
 
 constexpr uint32_t GPIO_SAMPLE_INTERVAL_MS = 10;
 constexpr uint32_t DEBOUNCE_PRESS_MS = 30;
