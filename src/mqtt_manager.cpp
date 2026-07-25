@@ -8,7 +8,22 @@
 #include <Arduino.h>
 #include <esp_system.h>
 
+namespace {
+
+constexpr UBaseType_t MQTT_LIFECYCLE_QUEUE_LENGTH = 8;
+
+}  // namespace
+
 bool MqttManager::begin(const char* clientId, const char* lwtPayload) {
+    lifecycleQueue_ = xQueueCreate(
+        MQTT_LIFECYCLE_QUEUE_LENGTH,
+        sizeof(QueuedLifecycleEvent)
+    );
+    if (lifecycleQueue_ == nullptr) {
+        Serial.println("[MQTT] lifecycle queue allocation failed");
+        return false;
+    }
+
     esp_mqtt_client_config_t config = {};
     config.host = MQTT_HOST;
     config.port = nightshift::MQTT_PORT;
@@ -28,6 +43,8 @@ bool MqttManager::begin(const char* clientId, const char* lwtPayload) {
     client_ = esp_mqtt_client_init(&config);
     if (client_ == nullptr) {
         Serial.println("[MQTT] client initialization failed");
+        vQueueDelete(lifecycleQueue_);
+        lifecycleQueue_ = nullptr;
         return false;
     }
 
@@ -39,6 +56,10 @@ bool MqttManager::begin(const char* clientId, const char* lwtPayload) {
     );
     if (registered != ESP_OK) {
         Serial.printf("[MQTT] event registration failed err=%d\n", registered);
+        esp_mqtt_client_destroy(client_);
+        client_ = nullptr;
+        vQueueDelete(lifecycleQueue_);
+        lifecycleQueue_ = nullptr;
         return false;
     }
 
@@ -52,33 +73,43 @@ bool MqttManager::reached(uint32_t nowMs, uint32_t dueAtMs) {
 }
 
 void MqttManager::update(uint32_t nowMs) {
-    if (connectedEvent_) {
-        connectedEvent_ = false;
-        connecting_ = false;
-        connected_ = true;
-        backoffMs_ = nightshift::MQTT_RECONNECT_MIN_MS;
-        if (everConnected_) {
-            ++reconnectCount_;
-        }
-        everConnected_ = true;
-        connectedEdge_ = true;
-        Serial.printf("[MQTT] connected reconnect_count=%lu\n",
-            static_cast<unsigned long>(reconnectCount_));
-    }
+    QueuedLifecycleEvent event;
+    while (
+        lifecycleQueue_ != nullptr &&
+        xQueueReceive(lifecycleQueue_, &event, 0) == pdTRUE
+    ) {
+        const bool wasConnecting = lifecycleState_.isConnecting();
+        const MqttLifecycleTransition transition =
+            lifecycleState_.apply(event.type);
 
-    if (disconnectedEvent_) {
-        disconnectedEvent_ = false;
-        const bool wasActive = connected_ || connecting_;
-        connected_ = false;
-        connecting_ = false;
-        if (wasActive) {
+        if (transition.resetBackoff) {
+            backoffMs_ = nightshift::MQTT_RECONNECT_MIN_MS;
+        }
+        if (transition.becameConnected) {
+            Serial.printf("[MQTT] connected generation=%lu reconnect_count=%lu\n",
+                static_cast<unsigned long>(
+                    lifecycleState_.connectionGeneration()
+                ),
+                static_cast<unsigned long>(lifecycleState_.reconnectCount()));
+        }
+        if (transition.becameDisconnected || wasConnecting) {
             Serial.println("[MQTT] disconnected");
         }
-        disconnectedEdge_ = true;
-        scheduleRetry(nowMs);
+        if (transition.scheduleReconnect) {
+            scheduleRetry(nowMs);
+        }
+        if (event.type == MqttLifecycleEventType::Error) {
+            Serial.printf("[MQTT] transport error type=%d connect_rc=%d\n",
+                event.errorType, event.connectReturnCode);
+        }
     }
 
-    if (!networkReady_ || connected_ || connecting_ || client_ == nullptr) {
+    if (
+        !networkReady_ ||
+        lifecycleState_.isConnected() ||
+        lifecycleState_.isConnecting() ||
+        client_ == nullptr
+    ) {
         return;
     }
 
@@ -86,7 +117,7 @@ void MqttManager::update(uint32_t nowMs) {
         const esp_err_t result = esp_mqtt_client_start(client_);
         if (result == ESP_OK) {
             started_ = true;
-            connecting_ = true;
+            lifecycleState_.markConnecting();
             Serial.println("[MQTT] connection attempt started");
         } else {
             Serial.printf("[MQTT] start failed err=%d\n", result);
@@ -98,7 +129,7 @@ void MqttManager::update(uint32_t nowMs) {
     if (reached(nowMs, nextAttemptAtMs_)) {
         const esp_err_t result = esp_mqtt_client_reconnect(client_);
         if (result == ESP_OK) {
-            connecting_ = true;
+            lifecycleState_.markConnecting();
             Serial.println("[MQTT] reconnect attempt started");
         } else {
             Serial.printf("[MQTT] reconnect request failed err=%d\n", result);
@@ -145,18 +176,6 @@ bool MqttManager::publishTelemetry(const char* payload) {
     return enqueue(MQTT_TOPIC_TELEMETRY, payload, 0, false);
 }
 
-bool MqttManager::takeConnectedEvent() {
-    const bool edge = connectedEdge_;
-    connectedEdge_ = false;
-    return edge;
-}
-
-bool MqttManager::takeDisconnectedEvent() {
-    const bool edge = disconnectedEdge_;
-    disconnectedEdge_ = false;
-    return edge;
-}
-
 int MqttManager::getOutboxSize() const {
     return client_ == nullptr ? 0 : esp_mqtt_client_get_outbox_size(client_);
 }
@@ -168,27 +187,32 @@ void MqttManager::eventHandler(
     void* eventData
 ) {
     auto* self = static_cast<MqttManager*>(handlerArgs);
-    self->handleEvent(eventId, static_cast<esp_mqtt_event_handle_t>(eventData));
-}
+    if (self->lifecycleQueue_ == nullptr) {
+        return;
+    }
 
-void MqttManager::handleEvent(int32_t eventId, esp_mqtt_event_handle_t event) {
+    QueuedLifecycleEvent queued;
+    const auto event = static_cast<esp_mqtt_event_handle_t>(eventData);
     switch (eventId) {
         case MQTT_EVENT_CONNECTED:
-            connectedEvent_ = true;
+            queued.type = MqttLifecycleEventType::Connected;
             break;
         case MQTT_EVENT_DISCONNECTED:
-            disconnectedEvent_ = true;
+            queued.type = MqttLifecycleEventType::Disconnected;
             break;
         case MQTT_EVENT_ERROR:
+            queued.type = MqttLifecycleEventType::Error;
             if (event != nullptr && event->error_handle != nullptr) {
-                Serial.printf("[MQTT] transport error type=%d connect_rc=%d\n",
-                    event->error_handle->error_type,
-                    event->error_handle->connect_return_code);
+                queued.errorType = event->error_handle->error_type;
+                queued.connectReturnCode =
+                    event->error_handle->connect_return_code;
             }
             break;
         default:
-            break;
+            return;
     }
+
+    xQueueSend(self->lifecycleQueue_, &queued, portMAX_DELAY);
 }
 
 void MqttManager::scheduleRetry(uint32_t nowMs) {

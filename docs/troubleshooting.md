@@ -32,6 +32,22 @@ python "$env:USERPROFILE\.platformio\packages\tool-esptoolpy\esptool.py" --chip 
 - The node uses DHCP; expected addresses are `192.168.51.10`–`.100`.
 - Loss of Wi-Fi does not stop sampling and does not cause reboot loops.
 
+Do not interpret an ESP32 `AUTH_EXPIRE` reason as proof of a rejected password.
+Before changing firmware or credentials, collect Orange Pi evidence showing:
+
+- a normal phone/client can join `stillwork`;
+- hostapd is running on `ap0`;
+- `wlan0` and `ap0` are both on channel 6;
+- hostapd uses WPA2-PSK with CCMP and does not require PMF;
+- hostapd debug output is captured during the ESP32 connection attempt.
+
+Only if a normal client connects while the ESP32 still fails, change one ESP32
+diagnostic variable at a time: reverify the ignored secrets, perform one
+controlled erase of saved Wi-Fi state, retain `WiFi.persistent(false)`, test
+with Wi-Fi sleep disabled, and optionally connect on known channel 6. Preserve
+each serial log. Do not erase saved Wi-Fi state on every boot without evidence
+that it is necessary.
+
 ## MQTT does not connect
 
 - Confirm the broker listens on `192.168.51.1:1884`.

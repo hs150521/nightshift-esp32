@@ -2,6 +2,7 @@
 #include <esp_system.h>
 
 #include "boot_identity.h"
+#include "connection_lifecycle.h"
 #include "config.h"
 #include "debounce.h"
 #include "gpio_sampler.h"
@@ -22,6 +23,7 @@ Debouncer debouncer;
 WiFiManager wifiManager;
 MqttManager mqttManager;
 PublishScheduler publishScheduler;
+EffectiveConnectivityCoordinator connectivityCoordinator;
 PayloadBuilder* payloadBuilder = nullptr;
 uint32_t lastSampleAtMs = 0;
 
@@ -136,11 +138,35 @@ void loop() {
     mqttManager.setNetworkReady(wifiManager.isConnected());
     mqttManager.update(nowMs);
 
-    if (mqttManager.takeDisconnectedEvent() || !mqttManager.isConnected()) {
-        publishScheduler.onDisconnected();
-    }
-    if (mqttManager.takeConnectedEvent() && mqttManager.isConnected()) {
-        publishScheduler.onConnected(nowMs);
+    const EffectiveConnectionEdge connectionEdge = connectivityCoordinator.update(
+        wifiManager.isConnected(),
+        mqttManager.isTransportConnected(),
+        mqttManager.getConnectionGeneration(),
+        nowMs,
+        publishScheduler
+    );
+    switch (connectionEdge) {
+        case EffectiveConnectionEdge::Connected:
+            Serial.printf(
+                "[Network] effective connected mqtt_generation=%lu\n",
+                static_cast<unsigned long>(
+                    mqttManager.getConnectionGeneration()
+                )
+            );
+            break;
+        case EffectiveConnectionEdge::Disconnected:
+            Serial.println("[Network] effective disconnected");
+            break;
+        case EffectiveConnectionEdge::Reconnected:
+            Serial.printf(
+                "[Network] effective reconnected mqtt_generation=%lu\n",
+                static_cast<unsigned long>(
+                    mqttManager.getConnectionGeneration()
+                )
+            );
+            break;
+        case EffectiveConnectionEdge::None:
+            break;
     }
 
     servicePublishes(nowMs);
