@@ -60,8 +60,13 @@ void servicePublishes(uint32_t nowMs) {
         if (published) {
             Serial.printf(
                 "[Publish] state seq=%lu result=queued-qos1-retained "
+                "g4=%d g5=%d g6=%d g7=%d "
                 "cushion=%d footrest=%d presence=%d\n",
                 static_cast<unsigned long>(payloadBuilder->getSeq()),
+                state.gpio4,
+                state.gpio5,
+                state.gpio6,
+                state.gpio7,
                 state.cushion,
                 state.footrest,
                 state.presence
